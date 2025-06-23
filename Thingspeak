@@ -1,0 +1,99 @@
+#include <ESP8266WiFi.h>
+#include <Adafruit_BMP085.h>
+#include <DHT.h>
+#include <Wire.h>
+#include <LiquidCrystal_I2C.h>
+
+#define DHTPIN D3          // DHT11 data pin
+#define DHTTYPE DHT11
+#define RAIN_SENSOR A0     // Rain sensor analog pin
+
+const char* ssid = "govinda";            // Replace with your WiFi SSID
+const char* password = "balu9397";    // Replace with your WiFi password
+const char* host = "api.thingspeak.com";
+const char* apiKey = "888WGCM880VP98E9"; // Replace with your ThingSpeak Write API key
+
+DHT dht(DHTPIN, DHTTYPE);
+Adafruit_BMP085 bmp;
+LiquidCrystal_I2C lcd(0x27, 16, 2);  // LCD address might be 0x27 or 0x3F
+
+void setup() {
+  Serial.begin(115200);
+  delay(100);
+
+  dht.begin();
+  if (!bmp.begin()) {
+    Serial.println("Could not find a valid BMP180 sensor, check wiring!");
+    while (1) {}
+  }
+  lcd.init();
+  lcd.backlight();
+  lcd.setCursor(0, 0);
+  lcd.print("Connecting WiFi");
+
+  WiFi.begin(ssid, password);
+  Serial.print("Connecting to WiFi");
+
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+  Serial.println("\nWiFi connected.");
+   lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("WiFi Connected");
+  delay(1500);
+  lcd.clear();
+}
+
+void loop() {
+  float h = dht.readHumidity();
+  float t_dht = dht.readTemperature();
+  float t_bmp = bmp.readTemperature();
+  float pressure = bmp.readPressure() / 100.0; // in hPa
+  int rainValue = analogRead(RAIN_SENSOR);     // 0 (wet) to 1023 (dry)
+
+  if (isnan(h) || isnan(t_dht)) {
+    Serial.println("Failed to read from DHT sensor!");
+    lcd.setCursor(0, 0);
+    lcd.print("DHT Error      ");
+    delay(2000);
+    return;
+  }
+
+  Serial.println("Sending data to ThingSpeak...");
+
+  WiFiClient client;
+  if (!client.connect(host, 80)) {
+    Serial.println("Connection failed");
+    return;
+  }
+  
+   // Display on LCD
+  lcd.setCursor(0, 0);
+  lcd.print("T:");
+  lcd.print(t_dht, 1);
+  lcd.print(" H:");
+  lcd.print(h, 0);
+  lcd.print("%");
+
+  lcd.setCursor(0, 1);
+  lcd.print("P:");
+  lcd.print(pressure, 0);
+  lcd.print(" R:");
+  lcd.print(map(rainValue, 0, 1023, 100, 0)); // Wetness %
+
+  String url = "/update?api_key=" + String(apiKey) +
+               "&field1=" + String(t_dht) +
+               "&field2=" + String(h) +
+               "&field3=" + String(t_bmp) +
+               "&field4=" + String(pressure) +
+               "&field5=" + String(rainValue);
+
+  client.print(String("GET ") + url + " HTTP/1.1\r\n" +
+               "Host: " + host + "\r\n" +
+               "Connection: close\r\n\r\n");
+
+  Serial.println("Data sent:\n" + url);
+  delay(1000); // ThingSpeak limit is 15 seconds minimum between updates
+}
